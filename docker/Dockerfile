@@ -1,6 +1,8 @@
-ARG PHP_VERSION=8.1
+ARG PHP_VERSION=8.3.22-apache-bookworm
+ARG WEBTREES_VERSION=2.2.1
+ARG PATCH_VERSION=2
 
-FROM docker.io/library/php:$PHP_VERSION-apache
+FROM php:$PHP_VERSION
 
 # https://hub.docker.com/_/php
 # https://github.com/NathanVaughn/webtrees-docker/issues/160
@@ -8,17 +10,17 @@ RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
 ENV WEBTREES_HOME="/var/www/webtrees"
 WORKDIR $WEBTREES_HOME
+RUN groupadd -g 16847 webtrees && useradd -m -u 16847 -g webtrees webtrees
 
 # install pre-reqs
-# postgresql-client provides pg_isready
 # mariadb-client provides mysqladmin
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y \
     curl \
     libmagickwand-dev \
     libpq-dev \
     libzip-dev \
-    postgresql-client \
     mariadb-client \
     patch \
     python3 \
@@ -26,27 +28,20 @@ RUN apt-get update \
     --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
-# install php extensions
-# https://github.com/Imagick/imagick/issues/640#issuecomment-2470204174
-# This is only an issue on ARM64
-ADD --chmod=0755 \
-  https://github.com/mlocati/docker-php-extension-installer/releases/download/2.6.3/install-php-extensions \
-  /usr/local/bin/
-RUN install-php-extensions imagick/imagick@28f27044e435a2b203e32675e942eb8de620ee58 \
+RUN pecl install imagick \
  && docker-php-ext-enable imagick \
  && docker-php-ext-configure gd --with-freetype --with-jpeg \
  && docker-php-ext-install -j"$(nproc)" pdo pdo_mysql pdo_pgsql zip intl gd exif
 
 # remove old apt stuff
 RUN apt-get purge gcc g++ make -y \
- && apt-get autoremove -y \
+ && apt-get autoremove --purge -y \
  && apt-get clean \
  && rm -rf /var/tmp/* /etc/apache2/sites-enabled/000-*.conf
 
 ARG WEBTREES_VERSION
-RUN curl -s -L https://github.com/fisharebest/webtrees/releases/download/${WEBTREES_VERSION}/webtrees-${WEBTREES_VERSION}.zip -o webtrees.zip \
- && unzip -q webtrees.zip -d /var/www/ && rm webtrees.zip \
- && rm $WEBTREES_HOME/*.md
+COPY webtrees-${WEBTREES_VERSION}.zip webtrees.zip
+RUN unzip -q webtrees.zip -d /var/www/ && rm webtrees.zip && rm $WEBTREES_HOME/*.md
 
 # Disable version update prompt. Webtrees should not be upgrading itself,
 # users should be using tagged container versions
@@ -60,11 +55,13 @@ RUN patch app/Services/UpgradeService.php /UpgradeService.patch \
  && rm vendor/egulias/email-validator/src/Validation/MessageIDValidation.php
 
 # enable apache modules
-RUN a2enmod rewrite && a2enmod ssl && rm -rf /var/www/html
+RUN a2enmod rewrite && rm -rf /var/www/html
 
 # copy apache/php configs
 COPY .htaccess ./
-COPY apache/ /etc/apache2/sites-available/
+COPY apache/webtrees.conf /etc/apache2/sites-enabled/webtrees.conf
+COPY apache/ports.conf /etc/apache2/ports.conf
+RUN chown -R webtrees:webtrees /usr/local/etc/php
 
 # entrypoint
 COPY docker-entrypoint.py /
@@ -74,7 +71,8 @@ COPY docker-healthcheck.sh /
 RUN chmod +x /docker-healthcheck.sh
 
 # final Docker config
-EXPOSE 80 443
+USER webtrees
+EXPOSE 8080
 VOLUME ["$WEBTREES_HOME/data"]
 
 HEALTHCHECK CMD /docker-healthcheck.sh

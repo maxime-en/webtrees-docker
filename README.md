@@ -1,22 +1,36 @@
-# Docker Image for [webtrees](https://webtrees.net/)
+# Docker Image for [webtrees](https://webtrees.net/) from [NathanVaughn/webtrees-docker](https://github.com/NathanVaughn/webtrees-docker)
 
-[![](https://github.com/NathanVaughn/webtrees-docker/workflows/Check%20and%20Push%20Updates/badge.svg)](https://github.com/NathanVaughn/webtrees-docker)
-[![](https://img.shields.io/docker/v/nathanvaughn/webtrees)](https://hub.docker.com/r/nathanvaughn/webtrees)
-[![](https://img.shields.io/docker/image-size/nathanvaughn/webtrees)](https://hub.docker.com/r/nathanvaughn/webtrees)
-[![](https://img.shields.io/docker/pulls/nathanvaughn/webtrees)](https://hub.docker.com/r/nathanvaughn/webtrees)
-[![](https://img.shields.io/github/license/nathanvaughn/webtrees-docker)](https://github.com/NathanVaughn/webtrees-docker)
+This docker image is very close to the NathanVaughn's one, apart from that
+it can be executed without root rights (user option for instance).
+Even if you start without the docker user option, the Dockerfile enforces
+starting the application using a non-privileged user with the USER directive.
 
-This is a multi-architecture, up-to-date, Docker image for
-[webtrees](https://github.com/fisharebest/webtrees) served over HTTP or HTTPS.
-This can be put behind a reverse proxy such as CloudFlare or Traefik, or
-run standalone.
+The NathanVaughn's docker image is multi-arch and can be executed standalone,
+managing the SSL layer if required. This fork removes a lot of features not
+useful from my side, for example the SSL layer is handled by a reverse
+proxy. It also removes support for other database systems than mysql/mariadb.
 
 ## Usage
 
 ### Quickstart
 
-If you want to jump right in, take a look at the provided
-[docker-compose.yml](https://github.com/NathanVaughn/webtrees-docker/blob/master/docker-compose.yml).
+No pre-built image is provided.
+You can build the docker image easily by cloning the repository
+and building from source:
+
+```bash
+git clone https://github.com/maxime-en/webtrees-docker.git
+make
+```
+
+You will require the following dependancies:
+
+* make
+* curl
+* docker
+* docker buildx plugin
+
+A [docker-compose.yml](https://github.com/maxime-en/webtrees-docker/blob/main/docker-compose.yml) example file is provided.
 
 ### Environment Variables
 
@@ -32,13 +46,8 @@ the default value will be used.
 | Environment Variable                                                       | Required | Default               | Notes                                                                                                                                                                                                             |
 | -------------------------------------------------------------------------- | -------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PRETTY_URLS`                                                              | No       | `False`               | Setting this to any truthy value (`True`, `1`, `yes`) will enable [pretty URLs](https://webtrees.net/faq/urls/). This can be toggled at any time, however you must go through initial setup at least once first.  |
-| `HTTPS` or `SSL`                                                           | No       | `False`               | Setting this to any truthy value (`True`, `1`, `yes`) will enable HTTPS. If `True`, you must also fill out `SSL_CERT_FILE` and `SSL_CERT_KEY_FILE`                                                                |
-| `HTTPS_REDIRECT` or `SSL_REDIRECT`                                         | No       | `False`               | Setting this to any truthy value (`True`, `1`, `yes`) will enable a _permanent_ 301 redirect to HTTPS . Leaving this off will allow webtrees to be accessed over HTTP, but not automatically redirected to HTTPS. |
-| `SSL_CERT_FILE`                                                            | No       | `/certs/webtrees.crt` | Certificate file to use for HTTPS. Can either be absolute, or relative to `/var/www/webtrees/data/`.                                                                                                              |
-| `SSL_CERT_KEY_FILE`                                                        | No       | `/certs/webtrees.key` | Certificate key file to use for HTTPS. Can either be absolute, or relative to `/var/www/webtrees/data/`.                                                                                                          |
 | `LANG`                                                                     | Yes      | `en-us`               | webtrees localization setting. This takes a locale code. List: <https://github.com/fisharebest/webtrees/tree/main/resources/lang/>                                                                               |
 | `BASE_URL`                                                                 | Yes      | None                  | Base URL of the installation, with protocol. This needs to be in the form of `http://webtrees.example.com`                                                                                                        |
-| `DB_TYPE`                                                                  | Yes      | `mysql`               | Database server type. See [below](#database) for valid values.                                                                                                                                                    |
 | `DB_HOST`                                                                  | Yes      | None                  | Database server host.                                                                                                                                                                                             |
 | `DB_PORT`                                                                  | Yes      | `3306`                | Database server port.                                                                                                                                                                                             |
 | `DB_USER` or `MYSQL_USER` or `MARIADB_USER` or `POSTGRES_USER`             | Yes      | `webtrees`            | Database server username.                                                                                                                                                                                         |
@@ -57,8 +66,7 @@ the default value will be used.
 | `PHP_MAX_EXECUTION_TIME`                                                   | No       | `90`                  | PHP max execution time for a request in seconds. See the [PHP documentation](https://www.php.net/manual/en/info.configuration.php#ini.max-execution-time)                                                         |
 | `PHP_POST_MAX_SIZE`                                                        | No       | `50M`                 | PHP POST request max size. See the [PHP documentation](https://www.php.net/manual/en/ini.core.php#ini.post-max-size)                                                                                              |
 | `PHP_UPLOAD_MAX_FILE_SIZE`                                                 | No       | `50M`                 | PHP max uploaded file size. See the [PHP documentation](https://www.php.net/manual/en/ini.core.php#ini.upload-max-filesize)                                                                                       |
-| `PUID`                                                                     | No       | `33`                  | See [https://docs.linuxserver.io/general/understanding-puid-and-pgid/](https://docs.linuxserver.io/general/understanding-puid-and-pgid/)                                                                                         |
-| `PGID`                                                                     | No       | `33`                  | See [https://docs.linuxserver.io/general/understanding-puid-and-pgid/](https://docs.linuxserver.io/general/understanding-puid-and-pgid/)
+| `TRUSTED_HEADERS`                                                          | No       | None                  | Header to trust when behind a reverse proxy to get the real user IP. See [webtrees documentation](https://webtrees.net/admin/proxy/).                                                                               |
 
 Additionally, you can add `_FILE` to the end of any environment variable name,
 and instead that will read the value in from the given filename.
@@ -78,28 +86,6 @@ You will need a separate container for this.
 
 - [MariaDB](https://hub.docker.com/_/mariadb)
 - [MySQL](https://hub.docker.com/_/mysql)
-
-PostgreSQL (`pgsql`) and SQLite (`sqlite`) are additionally both supported by
-webtrees and this image, but are [not recommended](https://github.com/fisharebest/webtrees/issues/5099#issuecomment-2581440755).
-This image does not support Microsoft SQL Server, in order to support multiple
-architectures. See issue:
-[microsoft/msphpsql#441](https://github.com/microsoft/msphpsql/issues/441#issuecomment-310237200)
-
-#### SQLite Values
-
-If you want to use a SQLite database, set the following values:
-
-- `DB_TYPE` to `sqlite`
-- `DB_NAME` to `desiredfilename`. Do not include any extension.
-
-#### PostgreSQL Values
-
-If you want to use a PostreSQL database, set the following values:
-
-- `DB_TYPE` to `pgsql`
-- `DB_PORT` to `5432`
-
-All other values are just like a MySQL database.
 
 ### Volumes
 
@@ -126,107 +112,19 @@ volumes:
     driver: local
 ```
 
-See the link above for information about v1.7 webtrees.
-
-To install a custom theme or module, the process is generally as follows:
-
-```bash
-docker exec -it webtrees_app_1 bash   # connect to the running container
-cd /var/www/webtrees/modules_v4/      # move into the modules directory
-curl -L <download url> -o <filename>  # download the file
-
-# if module is a .tar.gz file
-tar -xf <filename.tar.gz>             # extract the tar archive https://xkcd.com/1168/
-rm <filename.tar.gz>                  # remove the tar archive
-
-# if module is a .zip file
-apt update && apt install unzip       # install the unzip package
-unzip <filename.zip>                  # extract the zip file
-rm <filename.zip>                     # remove the zip file
-
-exit                                  # disconnect from the container
-```
-
 ### Network
 
-The image exposes port 80 and 443.
+The image exposes port 8080.
 
 Example `docker-compose`:
 
 ```yml
 ports:
-  - 80:80
-  - 443:443
+  - 8080:8080
 ```
-
-If you have the HTTPS redirect enabled, you still need to expose port 80.
-If you're not using HTTPS at all, you don't need to expose port 443.
 
 ### ImageMagick
 
 `ImageMagick` is included in this image to speed up
 [thumbnail creation](https://webtrees.net/faq/thumbnails/).
 webtrees will automatically prefer it over `gd` with no configuration.
-
-## Tags
-
-### Specific Versions
-
-Each stable, legacy, beta, and alpha release version of webtrees
-produces a version-tagged build of the Docker container.
-
-Example:
-
-```yml
-image: ghcr.io/nathanvaughn/webtrees:2.1.2
-```
-
-### Latest
-
-Currently, the tags `latest`, `latest-alpha`, `latest-beta` and `latest-legacy`
-are available for the latest stable, alpha, beta and legacy versions of webtrees,
-respectively.
-
-Example:
-
-```yml
-image: ghcr.io/nathanvaughn/webtrees:latest
-```
-
-> **Note**
-> Legacy versions of webtrees are no longer supported.
-
-## Issues
-
-New releases of the Dockerfile are automatically generated from upstream
-webtrees versions. This means a human does not vette every release. While
-I try to stay on top of things, sometimes breaking issues do occur. If you
-have any, please feel free to fill out an
-[issue](https://github.com/NathanVaughn/webtrees-docker/issues).
-
-## Reverse Proxy Issues
-
-webtrees does not like running behind a reverse proxy, and depending on your setup,
-you may need to adjust some database values manually.
-
-For example, if you are accessing webtrees via a reverse proxy serving content
-over HTTPS, but using this container with HTTP, you _might_ need to make the following
-changes in your database:
-
-```sql
-mysql -u webtrees -p
-
-use webtrees;
-update wt_site_setting set setting_value='https://example.com/login' where setting_name='LOGIN_URL';
-update wt_site_setting set setting_value='https://example.com/' where setting_name='SERVER_URL';
-quit;
-```
-
-For more info, see [this](https://webtrees.net/admin/proxy/).
-
-## Registry
-
-This image is available from 2 different registries. Choose whichever you want:
-
-- [docker.io/nathanvaughn/webtrees](https://hub.docker.com/r/nathanvaughn/webtrees)
-- [ghcr.io/nathanvaughn/webtrees](https://github.com/users/nathanvaughn/packages/container/package/webtrees)

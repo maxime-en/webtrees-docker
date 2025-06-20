@@ -16,22 +16,11 @@ class NoRedirect(request.HTTPRedirectHandler):
         return None
 
 
-class DBType(Enum):
-    mysql = "mysql"
-    pgsql = "pgsql"
-    sqlite = "sqlite"
-
-
 @dataclass
 class EnvVars:
     prettyurls: bool
-    https: bool
-    httpsredirect: bool
-    sslcertfile: str
-    sslcertkeyfile: str
     lang: str
     baseurl: Optional[str]
-    dbtype: DBType
     dbhost: Optional[str]
     dbport: str
     dbuser: str
@@ -52,9 +41,7 @@ class EnvVars:
     phpmaxexecutiontime: str
     phppostmaxsize: str
     phpuploadmaxfilesize: str
-    # user/group ID
-    puid: str
-    pgid: str
+    trustedheaders: Optional[str]
 
 
 def truish(value: Optional[str]) -> bool:
@@ -134,15 +121,8 @@ def get_environment_variable(
 
 ENV = EnvVars(
     prettyurls=truish(get_environment_variable("PRETTY_URLS")),
-    https=truish(get_environment_variable("HTTPS", alternates=["SSL"])),
-    httpsredirect=truish(
-        get_environment_variable("HTTPS_REDIRECT", alternates=["SSL_REDIRECT"])
-    ),
-    sslcertfile=get_environment_variable("SSL_CERT_FILE", "/certs/webtrees.crt"),
-    sslcertkeyfile=get_environment_variable("SSL_CERT_KEY_FILE", "/certs/webtrees.key"),
-    baseurl=get_environment_variable("BASE_URL"),
     lang=get_environment_variable("LANG", "en-US"),
-    dbtype=DBType[get_environment_variable("DB_TYPE", "mysql")],
+    baseurl=get_environment_variable("BASE_URL"),
     dbhost=get_environment_variable("DB_HOST"),
     dbport=get_environment_variable("DB_PORT", "3306"),
     dbuser=get_environment_variable(
@@ -172,8 +152,7 @@ ENV = EnvVars(
     phpmaxexecutiontime=get_environment_variable("PHP_MAX_EXECUTION_TIME", "90"),
     phppostmaxsize=get_environment_variable("PHP_POST_MAX_SIZE", "50M"),
     phpuploadmaxfilesize=get_environment_variable("PHP_UPLOAD_MAX_FILE_SIZE", "50M"),
-    puid=get_environment_variable("PUID", "33"),  # www-data user
-    pgid=get_environment_variable("PGID", "33"),
+    trustedheaders=get_environment_variable("TRUSTED_HEADERS", ""),
 )
 
 
@@ -270,70 +249,10 @@ def set_php_ini_value(key: str, value: str) -> None:
     add_line_to_file(PHP_INI_FILE, f"{key} = {value}")
 
 
-def enable_apache_site(
-    enable_sites: List[Literal["webtrees", "webtrees-redir", "webtrees-ssl"]],
-) -> None:
-    """
-    Enable an Apache site.
-    """
-
-    # update ssl apache config with cert path from env
-    ssl_site_file = "/etc/apache2/sites-available/webtrees-ssl.conf"
-
-    # make paths absolute
-    if not os.path.isabs(ENV.sslcertfile):
-        ENV.sslcertfile = os.path.join(DATA_DIR, ENV.sslcertfile)
-
-    if not os.path.isabs(ENV.sslcertkeyfile):
-        ENV.sslcertkeyfile = os.path.join(DATA_DIR, ENV.sslcertkeyfile)
-
-    # update file
-    with open(ssl_site_file, "r") as fp:
-        ssl_site_file_lines = fp.readlines()
-
-    new_ssl_site_file_lines = []
-    for line in ssl_site_file_lines:
-        if line.strip().startswith("SSLCertificateFile"):
-            line = line.replace(line.split()[1], ENV.sslcertfile)
-        elif line.strip().startswith("SSLCertificateKeyFile"):
-            line = line.replace(line.split()[1], ENV.sslcertkeyfile)
-
-        new_ssl_site_file_lines.append(line)
-
-    with open(ssl_site_file, "w") as fp:
-        fp.writelines(new_ssl_site_file_lines)
-
-    all_sites = ["webtrees", "webtrees-redir", "webtrees-ssl"]
-
-    # perl complains about locale to stderr, so disable that
-
-    # disable the other sites
-    for s in all_sites:
-        if s not in enable_sites:
-            print2(f"Disabling site {s}")
-            subprocess.check_call(
-                ["a2dissite", s], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-
-    # enable the desired sites
-    for s in enable_sites:
-        print2(f"Enabling site {s}")
-        subprocess.check_call(
-            ["a2ensite", s], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
-
-
 def perms() -> None:
     """
     Set up folder permissions
     """
-
-    print2("Setting up folder permissions for uploads")
-    # https://github.com/linuxserver/docker-baseimage-alpine/blob/bef0f4cee208396c92c0fdd1426613de02698301/root/etc/s6-overlay/s6-rc.d/init-adduser/run#L4-L9
-    subprocess.check_call(["groupmod", "-o", "-g", ENV.pgid, "www-data"])
-    subprocess.check_call(["usermod", "-o", "-u", ENV.puid, "www-data"])
-    subprocess.check_call(["chown", "-R", "www-data:www-data", DATA_DIR])
-
     if os.path.isfile(CONFIG_FILE):
         subprocess.check_call(["chmod", "700", CONFIG_FILE])
 
@@ -362,15 +281,8 @@ def check_db_variables() -> bool:
     Check if all required database variables are present
     """
     try:
-        assert ENV.dbtype is not None
         assert ENV.dbname is not None
         assert ENV.tblpfx is not None
-
-        if ENV.dbtype == DBType.sqlite:
-            ENV.dbhost = ""
-            ENV.dbport = ""
-            ENV.dbuser = ""
-            ENV.dbpass = ""
 
         assert ENV.dbhost is not None
         assert ENV.dbport is not None
@@ -400,66 +312,46 @@ def setup_wizard() -> None:
 
     if any(
         v is None
-        for v in [ENV.baseurl, ENV.wtname, ENV.wtuser, ENV.wtpass, ENV.wtemail]
+        for v in [ENV.wtname, ENV.wtuser, ENV.wtpass, ENV.wtemail]
     ):
         print2("WARNING: Not all required variables were found for setup wizard")
         return
 
-    assert ENV.baseurl is not None
-    if not ENV.baseurl.startswith("http"):
-        print2(
-            "WARNING: BASE_URL does not start with 'http'. This is likely not what you want."
-        )
-
     print2("Automating setup wizard")
     print2("Starting Apache in background")
-    # set us up to a known HTTP state
-    enable_apache_site(["webtrees"])
     # run apache in the background
     apache_proc = subprocess.Popen(["apache2-foreground"], stderr=subprocess.DEVNULL)
 
-    if ENV.dbtype in [DBType.mysql, DBType.pgsql]:
-        # for typing, check_db_variables already does this
-        assert ENV.dbhost is not None
+    # for typing, check_db_variables already does this
+    assert ENV.dbhost is not None
 
-        # try to resolve the host
-        # most common error is wrong hostname
-        try:
-            socket.gethostbyname(ENV.dbhost)
-        except socket.gaierror:
-            print2(f"ERROR: Could not resolve database host '{ENV.dbhost}'")
-            print2(
-                "ERROR: You likely have the DBHOST environment variable set incorrectly."
-            )
-            print2("ERROR: Exiting.")
+    # try to resolve the host
+    # most common error is wrong hostname
+    try:
+        socket.gethostbyname(ENV.dbhost)
+    except socket.gaierror:
+        print2(f"ERROR: Could not resolve database host '{ENV.dbhost}'")
+        print2(
+            "ERROR: You likely have the DBHOST environment variable set incorrectly."
+        )
+        print2("ERROR: Exiting.")
 
-            # stop apache
-            apache_proc.terminate()
-            # die
-            sys.exit(1)
+        # stop apache
+        apache_proc.terminate()
+        # die
+        sys.exit(1)
 
-        # wait until database is ready
-        if ENV.dbtype == DBType.mysql:
-            # https://dev.mysql.com/doc/refman/8.0/en/mysqladmin.html#option_mysqladmin_user
-            # don't miss the capital P
-            cmd = ["mysqladmin", "ping", "-h", ENV.dbhost, "-P", ENV.dbport, "--silent"]
-            name = "MySQL"
-        elif ENV.dbtype == DBType.pgsql:
-            # https://www.postgresql.org/docs/current/app-pg-isready.html
-            cmd = ["pg_isready", "-h", ENV.dbhost, "-p", ENV.dbport, "--quiet"]
-            name = "PostgreSQL"
+    # https://dev.mysql.com/doc/refman/8.0/en/mysqladmin.html#option_mysqladmin_user
+    # don't miss the capital &
+    cmd = ["mysqladmin", "ping", "-h", ENV.dbhost, "-P", ENV.dbport, "--silent"]
+    name = "MySQL"
 
-        while subprocess.run(cmd).returncode != 0:
-            print2(f"Waiting for {name} server {ENV.dbhost}:{ENV.dbport} to be ready")
-            time.sleep(1)
-
-    else:
-        # sqlite
-        # let Apache start up
-        time.sleep(2)
+    while subprocess.run(cmd).returncode != 0:
+        print2(f"Waiting for {name} server {ENV.dbhost}:{ENV.dbport} to be ready")
+        time.sleep(1)
 
     # send it
-    url = "http://127.0.0.1:80/"
+    url = "http://127.0.0.1:8080/"
     print2(f"Sending setup wizard request to {url}")
 
     retry_urlopen(
@@ -468,8 +360,7 @@ def setup_wizard() -> None:
             {
                 "lang": ENV.lang,
                 "tblpfx": ENV.tblpfx,
-                "baseurl": ENV.baseurl,
-                "dbtype": ENV.dbtype.value,
+                "dbtype": "mysql",
                 "dbhost": ENV.dbhost,
                 "dbport": ENV.dbport,
                 "dbuser": ENV.dbuser,
@@ -501,10 +392,11 @@ def update_config_file() -> None:
     # update independent values
     set_config_value("rewrite_urls", str(int(ENV.prettyurls)))
     set_config_value("base_url", ENV.baseurl)
+    if ENV.trustedheaders != "":
+        set_config_value("trusted_headers", ENV.trustedheaders)
 
     # update database values as a group
     if check_db_variables():
-        set_config_value("dbtype", ENV.dbtype.value)
         set_config_value("dbhost", ENV.dbhost)
         set_config_value("dbport", ENV.dbport)
         set_config_value("dbuser", ENV.dbuser)
@@ -513,33 +405,11 @@ def update_config_file() -> None:
         set_config_value("tblpfx", ENV.tblpfx)
 
     # update databases verification values
-    if ENV.dbtype == DBType.mysql and all(
-        v is not None for v in [ENV.dbkey, ENV.dbcert, ENV.dbca]
-    ):
+    if all(v is not None for v in [ENV.dbkey, ENV.dbcert, ENV.dbca]):
         set_config_value("dbkey", ENV.dbkey)
         set_config_value("dbcert", ENV.dbcert)
         set_config_value("dbca", ENV.dbca)
         set_config_value("dbverify", str(int(ENV.dbverify)))
-
-
-def https() -> None:
-    """
-    Configure enabled Apache sites
-    """
-    print2("Configuring HTTPS")
-
-    # no https
-    if not ENV.https:
-        print2("Removing HTTPS")
-        enable_apache_site(["webtrees"])
-    # https with redirect
-    elif ENV.httpsredirect:
-        print2("Adding HTTPS, with HTTPS redirect")
-        enable_apache_site(["webtrees-ssl", "webtrees-redir"])
-    # https no redirect
-    else:
-        print2("Adding HTTPS, removing HTTPS redirect")
-        enable_apache_site(["webtrees", "webtrees-ssl"])
 
 
 def htaccess() -> None:
@@ -560,19 +430,15 @@ def htaccess() -> None:
 
 
 def main() -> None:
-    # first, set up permissions
-    perms()
     # create php config
     php_ini()
     # run the setup wizard if the config file doesn't exist
     setup_wizard()
     # update the config file
     update_config_file()
-    # configure https
-    https()
     # make sure .htaccess exists
     htaccess()
-    # set up permissions again
+    # enforce config permissions
     perms()
 
     print2("Starting Apache")
