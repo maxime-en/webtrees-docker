@@ -1,5 +1,5 @@
-ARG PHP_VERSION=8.3.22-apache-bookworm
-ARG WEBTREES_VERSION=2.2.1
+ARG PHP_VERSION=8.4.26-apache-trixie
+ARG WEBTREES_VERSION=2.2.6
 ARG PATCH_VERSION=2
 
 FROM php:$PHP_VERSION
@@ -28,7 +28,8 @@ RUN apt-get update \
     --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
-RUN pecl install imagick \
+RUN pecl channel-update pecl.php.net \
+ && pecl install imagick-3.8.1 \
  && docker-php-ext-enable imagick \
  && docker-php-ext-configure gd --with-freetype --with-jpeg \
  && docker-php-ext-install -j"$(nproc)" pdo pdo_mysql pdo_pgsql zip intl gd exif
