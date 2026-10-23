@@ -2,7 +2,7 @@
 
 # Variables (override with `make IMAGE_NAME=myimage`)
 IMAGE_NAME ?= webtrees
-APP_VERSION ?= 2.2.1
+APP_VERSION ?= 2.2.6
 CONTEXT ?= ./docker/
 
 # Full image name
